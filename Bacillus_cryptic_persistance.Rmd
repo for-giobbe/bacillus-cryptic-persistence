@@ -1,0 +1,1007 @@
+---
+output:
+  html_document: default
+  pdf_document: default
+---
+## Cryptic persistence of male gonad molecular groundplan in parthenogenetic Bacillus species
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+<br />
+<br />
+
+#### **Abstract:**
+Selection - or the lack of it - may lead to the loss of a trait; when this happens, theory predicts that the molecular machinery underlying the trait phenotypic expression should decay. Yet, empirical evidence is mixed.  We hypothesize that the molecular ground plan of a lost trait could persist due to pleiotropic effects on other traits and that gene coexpression network architecture could constrain individual gene expression. We tested this hypothesis in the Bacillus stick insects: after first identifying genes expressed in male reproductive tissues in a bisexual species, we investigated their differences in two parthenogenetic species, focusing on gene regulatory network structure inferred by gene coexpression patterns. We found that the expression correlation of genes within the male gonad network is partially preserved in parthenogens; furthermore, no signature of relaxed selection was found in the sequence evolution for genes associated to male gonad in parthenogens. As these genes are mostly expressed in female gonads, the preservation could stem from pleiotropic effects in female reproduction. Connectivity within the network also played a key role, with highly connected - and more pleiotropic - genes within male gonads network having a gonad-biased transcription pattern in parthenogens. Our findings provide novel insight into the mechanisms which could underlie cryptic sex in parthenogens: more generally, they provide an example of the cryptic persistence of a lost trait molecular ground plan, driven by gene pleiotropy on other traits and within their coexpression network. 
+
+<br />
+<br />
+
+#### **Significance:**
+This work focuses on the molecular consequences of trait loss, leveraging parthenogenetic insect species as a testing ground. Genes associated with male reproduction in a bisexual species are found to have their expression coordination and sequence identity partially preserved in parthenogens, likely due to pleiotropic effects in female gonads; furthermore, pleiotropic genes associated with male gonads are more likely to be expressed in parthenogen gonads. These results highlight the role of pleiotropy in the cryptic persistence of a trait molecular ground plan, despite its phenotypical absence.
+
+<br />
+<br />
+
+#### **library requirements**
+
+```{r requirements, message=FALSE, warning=FALSE}
+
+require(WGCNA)
+require(data.table)
+require(tidyverse)
+require(grid)
+require(gridExtra)
+require(ggplot2)
+require(dplyr)    
+require(tidyr)
+require(networkD3)
+require(ggpubr)
+require(gtools)
+require(VennDiagram)
+require(ggridges)
+require(GeneOverlap)
+require(ggpubr)
+
+options(stringsAsFactors = FALSE);
+```
+
+<br />
+<br />
+
+#### **import _B. grandii_ expression data**
+
+```{r expression data, message=FALSE, warning=FALSE}
+femData = read.csv("BGM_RSEM.TMM.EXPR.matrix", sep =" ", header = TRUE)
+dim(femData);
+names(femData);
+
+datExpr0 = as.data.frame(t(femData[, -c(1)]));
+names(datExpr0) = femData$transcript;
+rownames(datExpr0) = names(femData)[-c(1)];
+
+gsg = goodSamplesGenes(datExpr0, verbose = 3);
+gsg$allOK
+
+if (!gsg$allOK)
+{
+  # Optionally, print the gene and sample names that were removed:
+  if (sum(!gsg$goodGenes)>0)
+    printFlush(paste("Removing genes:", paste(names(datExpr0)[!gsg$goodGenes], collapse = ", ")));
+  if (sum(!gsg$goodSamples)>0)
+    printFlush(paste("Removing samples:", paste(rownames(datExpr0)[!gsg$goodSamples], collapse = ", ")));
+  # Remove the offending genes and samples from the data:
+  datExpr0 = datExpr0[gsg$goodSamples, gsg$goodGenes]
+}
+```
+
+<br />
+<br />
+
+#### **import _B. grandii_ trait data**
+
+```{r trait data, fig.width=12, fig.height=12, message=FALSE, warning=FALSE}
+traitData = read.csv("traits_description.csv");
+
+traitData = traitData[, c(2,3:8) ];
+dim(traitData);
+names(traitData);
+
+Samples = rownames(datExpr0);
+traitRows = match(Samples, traitData$sample);
+datTraits = traitData[traitRows, -1];
+rownames(datTraits) = traitData[traitRows, 1];
+collectGarbage();
+
+# Plot samples and traits tree
+sampleTree2 = hclust(dist(datExpr0), method = "average");
+traitColors = numbers2colors(datTraits, signed = TRUE);
+plotDendroAndColors(sampleTree2, traitColors,
+                    groupLabels = names(datTraits),
+                    main = "Sample dendrogram and trait heatmap");
+```
+
+<br />
+<br />
+
+#### **infer _B. grandii_ coexpression network**
+
+```{r network, message=FALSE, fig.width=12, fig.height=12, warning=FALSE}
+allowWGCNAThreads() 
+powers = c(c(1:10), seq(from = 5, to=32, by=2))
+sft = pickSoftThreshold(datExpr0, powerVector = powers, verbose = 5,networkType = "signed")
+
+sizeGrWindow(9, 5)
+par(mfrow = c(1,2));
+cex1 = 0.9;
+# Scale-free topology fit index as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n",
+     main = paste("Scale independence"));
+text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     labels=powers,cex=cex1,col="red");
+# this line corresponds to using an R^2 cut-off of h
+abline(h=0.80,col="red")
+# Mean connectivity as a function of the soft-thresholding power
+plot(sft$fitIndices[,1], sft$fitIndices[,5],
+     xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",
+     main = paste("Mean connectivity"))
+text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
+
+net = blockwiseModules(datExpr0, power = 19,
+                       TOMType = "signed", networkType = "signed", minModuleSize = 30, mergeCutHeight = 0.2, corOptions = list(use = 'p', maxPOutliers = 0.1),
+                       numericLabels = TRUE, pamRespectsDendro = FALSE, replaceMissingAdjacencies = TRUE,
+                       saveTOMs = TRUE, saveTOMFileBase = "test",
+                       verbose = 3, maxBlockSize = 6000, corType = "bicor")
+
+# Plot the dendrogram and the module colors underneath
+sizeGrWindow(12, 9)
+mergedColors = labels2colors(net$colors)
+plotDendroAndColors(net$dendrograms[[1]], mergedColors[net$blockGenes[[1]]],
+                    "Module colors",
+                    dendroLabels = FALSE, hang = 0.03,
+                    addGuide = TRUE, guideHang = 0.05)
+
+moduleLabels = net$colors
+moduleColors = labels2colors(net$colors)
+MEs = net$MEs;
+geneTree = net$dendrograms[[1]];
+
+# Recalculate MEs with color labels
+nGenes = ncol(datExpr0);
+nSamples = nrow(datExpr0);
+MEs0 = moduleEigengenes(datExpr0, moduleColors)$eigengenes
+MEs = orderMEs(MEs0)
+moduleTraitCor = cor(MEs, datTraits, use = "all.obs", method = c("pearson"));
+moduleTraitPvalue = corPvalueStudent(moduleTraitCor, nSamples);
+moduleTraitPvalue  <- p.adjust(moduleTraitPvalue, method = "hochberg", n = length(moduleTraitPvalue))
+
+# Display the correlation values within a heatmap plot
+sizeGrWindow(10,6)
+textMatrix = paste(signif(moduleTraitCor, 2), "\n(",
+                   signif(moduleTraitPvalue, 1), ")", sep = "");
+dim(textMatrix) = dim(moduleTraitCor)
+par(mar = c(6, 8.5, 3, 3));
+labeledHeatmap(Matrix = moduleTraitCor,
+               xLabels = names(datTraits),
+               yLabels = names(MEs),
+               ySymbols = names(MEs),
+               colorLabels = FALSE,
+               colors = greenWhiteRed(90),
+               textMatrix = textMatrix,
+               
+               setStdMargins = FALSE,
+               cex.text = 0.8,
+               zlim = c(-1,1),
+               main = paste("Module-trait relationships"))
+```
+
+<br />
+<br />
+
+#### **characterize _B. grandii_ coexpression modules**
+
+```{r modules pt. 1, message=FALSE, warning=FALSE}
+
+### module genes
+black_module <- names(datExpr0)[moduleColors=="black"]
+blue_module <- names(datExpr0)[moduleColors=="blue"]
+brown_module <- names(datExpr0)[moduleColors=="brown"]
+red_module <- names(datExpr0)[moduleColors=="red"]
+green_module <- names(datExpr0)[moduleColors=="green"]
+yellow_module <- names(datExpr0)[moduleColors=="yellow"]
+turquoise_module <- names(datExpr0)[moduleColors=="turquoise"]
+grey_module <- names(datExpr0)[moduleColors=="grey"]
+
+### sizes
+black_moduleln <- length(black_module)
+blue_moduleln <- length(blue_module)
+brown_moduleln <- length(brown_module)
+red_moduleln <- length(red_module)
+green_moduleln <- length(green_module)
+yellow_moduleln <- length(yellow_module)
+turquoise_moduleln <- length(turquoise_module)
+grey_moduleln <- length(grey_module)
+
+# Define variable containing the variable column of datTrait
+mg = as.data.frame(datTraits$male_gonads);
+names(mg) = "mg"
+# names (colors) of the modules
+modNames = substring(names(MEs), 3)
+geneModuleMembership = as.data.frame(cor(datExpr0, MEs, use = "all.obs", method = c("spearman")));
+MMPvalue = as.data.frame(corPvalueStudent(as.matrix(geneModuleMembership), nSamples));
+
+names(geneModuleMembership) = paste("MM", modNames, sep="");
+names(MMPvalue) = paste("p.MM", modNames, sep="");
+geneTraitSignificance = as.data.frame(cor(datExpr0, mg, use = "all.obs", method = c("spearman")));
+GSPvalue = as.data.frame(corPvalueStudent(as.matrix(geneTraitSignificance), nSamples));
+names(geneTraitSignificance) = paste("GS.", names(mg), sep="");
+names(GSPvalue) = paste("p.GS.", names(mg), sep="");
+
+geneModuleMembership_re <- setDT(geneModuleMembership, keep.rownames = TRUE)[]
+geneTraitSignificance_re <- setDT(geneTraitSignificance, keep.rownames = TRUE)[]
+```
+
+```{r modules pt. 2, message=FALSE, fig.width=18, fig.height=18, warning=FALSE}
+
+mmembership_gsignificance <- merge(geneModuleMembership_re, geneTraitSignificance_re, by="rn")
+mmembership_gsignificance_turquoise <- subset(mmembership_gsignificance, mmembership_gsignificance$rn %in% turquoise_module)
+pearson_turquoise <- cor.test(abs(mmembership_gsignificance_turquoise$GS.mg), abs(mmembership_gsignificance_turquoise$MMturquoise), method = "pearson")
+turquoise_plot <- ggplot() + geom_point(data=mmembership_gsignificance_turquoise, aes(abs(GS.mg),abs(MMturquoise)), size = 5, alpha = 0.3, shape= 20, color="turquoise") +
+  labs(x="Gene Significance", y = "module membership", title = paste0(
+    "turquoise module    pval: ", round(pearson_turquoise$p.value,digits = 3), "     rho: ", round(pearson_turquoise$estimate,digits = 3))) + 
+  theme_classic() + theme(axis.text=element_text(size=12), axis.title=element_text(size=13,face="bold")) + theme(plot.margin = unit(c(0.5,0.5,0.5,0.5), "cm")) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(colour = "black", size=1)) +
+  theme(plot.margin = unit(c(1,1,1,1), "cm")) + theme(plot.title = element_text(size=16,face="bold"))
+
+mmembership_gsignificance <- merge(geneModuleMembership_re, geneTraitSignificance_re, by="rn")
+mmembership_gsignificance_green <- subset(mmembership_gsignificance, mmembership_gsignificance$rn %in% green_module)
+pearson_green <- cor.test(abs(mmembership_gsignificance_green$GS.mg), abs(mmembership_gsignificance_green$MMgreen), method = "pearson")
+green_plot <- ggplot() + geom_point(data=mmembership_gsignificance_green, aes(abs(GS.mg),abs(MMgreen)), size = 5, alpha = 0.3, shape= 20, color="green") +
+  labs(x="Gene Significance", y = "module membership", title = paste0(
+    "green module    pval: ", round(pearson_green$p.value,digits = 3), "     rho: ", round(pearson_green$estimate,digits = 3))) + 
+  theme_classic() + theme(axis.text=element_text(size=12), axis.title=element_text(size=13,face="bold")) + theme(plot.margin = unit(c(0.5,0.5,0.5,0.5), "cm")) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(colour = "black", size=1)) +
+  theme(plot.margin = unit(c(1,1,1,1), "cm")) + theme(plot.title = element_text(size=16,face="bold"))
+
+mmembership_gsignificance <- merge(geneModuleMembership_re, geneTraitSignificance_re, by="rn")
+mmembership_gsignificance_red <- subset(mmembership_gsignificance, mmembership_gsignificance$rn %in% red_module)
+pearson_red <- cor.test(abs(mmembership_gsignificance_red$GS.mg), abs(mmembership_gsignificance_red$MMred), method = "pearson")
+red_plot <- ggplot() + geom_point(data=mmembership_gsignificance_red, aes(abs(GS.mg),abs(MMred)), size = 5, alpha = 0.3, shape= 20, color="red") +
+  labs(x="Gene Significance", y = "module membership", title = paste0(
+    "red module    pval: ", round(pearson_red$p.value,digits = 3), "     rho: ", round(pearson_red$estimate,digits = 3))) + 
+  theme_classic() + theme(axis.text=element_text(size=12), axis.title=element_text(size=13,face="bold")) + theme(plot.margin = unit(c(0.5,0.5,0.5,0.5), "cm")) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(colour = "black", size=1)) +
+  theme(plot.margin = unit(c(1,1,1,1), "cm")) + theme(plot.title = element_text(size=16,face="bold"))
+
+mmembership_gsignificance <- merge(geneModuleMembership_re, geneTraitSignificance_re, by="rn")
+mmembership_gsignificance_yellow <- subset(mmembership_gsignificance, mmembership_gsignificance$rn %in% yellow_module)
+pearson_yellow <- cor.test(abs(mmembership_gsignificance_yellow$GS.mg), abs(mmembership_gsignificance_yellow$MMyellow), method = "pearson")
+yellow_plot <- ggplot() + geom_point(data=mmembership_gsignificance_yellow, aes(abs(GS.mg),abs(MMyellow)), size = 5, alpha = 0.3, shape= 20, color="yellow") +
+  labs(x="Gene Significance", y = "module membership", title = paste0(
+    "yellow module    pval: ", round(pearson_yellow$p.value,digits = 3), "     rho: ", round(pearson_yellow$estimate,digits = 3))) + 
+  theme_classic() + theme(axis.text=element_text(size=12), axis.title=element_text(size=13,face="bold")) + theme(plot.margin = unit(c(0.5,0.5,0.5,0.5), "cm")) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(colour = "black", size=1)) +
+  theme(plot.margin = unit(c(1,1,1,1), "cm")) + theme(plot.title = element_text(size=16,face="bold"))
+
+mmembership_gsignificance <- merge(geneModuleMembership_re, geneTraitSignificance_re, by="rn")
+mmembership_gsignificance_brown <- subset(mmembership_gsignificance, mmembership_gsignificance$rn %in% brown_module)
+pearson_brown <- cor.test(abs(mmembership_gsignificance_brown$GS.mg), abs(mmembership_gsignificance_brown$MMbrown), method = "pearson")
+brown_plot <- ggplot() + geom_point(data=mmembership_gsignificance_brown, aes(abs(GS.mg),abs(MMbrown)), size = 5, alpha = 0.3, shape= 20, color="brown") +
+  labs(x="Gene Significance", y = "module membership", title = paste0(
+    "brown module    pval: ", round(pearson_brown$p.value,digits = 3), "     rho: ", round(pearson_brown$estimate,digits = 3))) + 
+  theme_classic() + theme(axis.text=element_text(size=12), axis.title=element_text(size=13,face="bold")) + theme(plot.margin = unit(c(0.5,0.5,0.5,0.5), "cm")) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(colour = "black", size=1)) +
+  theme(plot.margin = unit(c(1,1,1,1), "cm")) + theme(plot.title = element_text(size=16,face="bold"))
+
+mmembership_gsignificance <- merge(geneModuleMembership_re, geneTraitSignificance_re, by="rn")
+mmembership_gsignificance_black <- subset(mmembership_gsignificance, mmembership_gsignificance$rn %in% black_module)
+pearson_black <- cor.test(abs(mmembership_gsignificance_black$GS.mg), abs(mmembership_gsignificance_black$MMblack), method = "pearson")
+black_plot <- ggplot() + geom_point(data=mmembership_gsignificance_black, aes(abs(GS.mg),abs(MMblack)), size = 5, alpha = 0.3, shape= 20, color="black") +
+  labs(x="Gene Significance", y = "module membership", title = paste0(
+    "black module    pval: ", round(pearson_black$p.value,digits = 3), "     rho: ", round(pearson_black$estimate,digits = 3))) + 
+  theme_classic() + theme(axis.text=element_text(size=12), axis.title=element_text(size=13,face="bold")) + theme(plot.margin = unit(c(0.5,0.5,0.5,0.5), "cm")) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(colour = "black", size=1)) +
+  theme(plot.margin = unit(c(1,1,1,1), "cm")) + theme(plot.title = element_text(size=16,face="bold"))
+
+
+mmembership_gsignificance <- merge(geneModuleMembership_re, geneTraitSignificance_re, by="rn")
+mmembership_gsignificance_blue <- subset(mmembership_gsignificance, mmembership_gsignificance$rn %in% blue_module)
+pearson_blue <- cor.test(abs(mmembership_gsignificance_blue$GS.mg), abs(mmembership_gsignificance_blue$MMblue), method = "pearson")
+blue_plot <- ggplot() + geom_point(data=mmembership_gsignificance_blue, aes(abs(GS.mg),abs(MMblue)), size = 5, alpha = 0.3, shape= 20, color="blue") +
+  labs(x="Gene Significance", y = "module membership", title = paste0(
+    "blue module    pval: ", round(pearson_blue$p.value,digits = 3), "     rho: ", round(pearson_blue$estimate,digits = 3))) + 
+  theme_classic() + theme(axis.text=element_text(size=12), axis.title=element_text(size=13,face="bold")) + theme(plot.margin = unit(c(0.5,0.5,0.5,0.5), "cm")) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(colour = "blue", size=1)) +
+  theme(plot.margin = unit(c(1,1,1,1), "cm")) + theme(plot.title = element_text(size=16,face="bold"))
+
+
+pmodules <- grid.arrange(turquoise_plot,
+                         green_plot,
+                         yellow_plot,
+                         blue_plot,
+                         black_plot,
+                         red_plot,
+                         brown_plot)
+
+pmodules
+```
+
+<br />
+<br />
+
+#### **_B. grandii_ coexpression network plots (Figure 1)**
+
+```{r heatmap, message=FALSE, fig.width=12, fig.height=6, warning=FALSE}
+
+moduleTraitCor_heat <- moduleTraitCor
+moduleTraitCor_heat_df <- moduleTraitCor_heat %>% as.data.frame 
+moduleTraitCor_heat_df <- setDT(moduleTraitCor_heat_df, keep.rownames = TRUE)[]
+moduleTraitCor_heat_df %>% gather(trait, value, 2:7) -> moduleTraitCor_heat_df
+moduleTraitCor_heat_df["padj"] <- moduleTraitPvalue
+
+moduleTraitCor_heat_df[moduleTraitCor_heat_df == "MEblack"] <- paste("black - A", black_moduleln)
+moduleTraitCor_heat_df[moduleTraitCor_heat_df == "MEblue"] <- paste("blue - B", blue_moduleln)
+moduleTraitCor_heat_df[moduleTraitCor_heat_df == "MEbrown"] <- paste("brown - C", brown_moduleln)
+moduleTraitCor_heat_df[moduleTraitCor_heat_df == "MEgreen"] <- paste("green - D", green_moduleln)
+moduleTraitCor_heat_df[moduleTraitCor_heat_df == "MEred"] <- paste("red - E", red_moduleln)
+moduleTraitCor_heat_df[moduleTraitCor_heat_df == "MEturquoise"] <- paste("turquoise - F", turquoise_moduleln)
+moduleTraitCor_heat_df[moduleTraitCor_heat_df == "MEyellow"] <- paste("yellow - G", yellow_moduleln)
+
+ggplot(data = moduleTraitCor_heat_df, aes(x = rn, y = trait)) +
+  geom_tile(aes(fill = value), color = "white", size=4) + 
+  scale_fill_gradientn(colours = c("gray", "white", "#04b4d6"), values = scales::rescale(c(-0.5, -0.4, 0, 0.4, 0.5)), name = "module - trait corelation") +
+  geom_text(aes(label = stars.pval(moduleTraitCor_heat_df$padj)), size = 12) +
+  #geom_text(aes(label = round(moduleTraitCor_heat_df$padj,6)), size = 5) +
+  theme_minimal() + coord_equal() + 
+  theme(axis.title.x=element_blank()) + 
+  theme(axis.title.y=element_blank()) + 
+  theme(plot.title = element_text(size=16,face="bold")) +
+  labs(title = "WGCNA modules - traits relationship in Bacillus grandii (obligate parthenogenetic)") + 
+  theme(axis.text=element_text(size=12), axis.title=element_text(size=16,face="bold"))
+```
+
+<br />
+<br />
+
+#### **calculate _B. rossius_ coexpression preservation (Figure 1)**
+
+```{r module preservation bro, fig.width=12, fig.height=12}
+BRO_gonad_data = read.csv("BRO_RSEM.TMM.EXPR.matrix", sep =" ", header = TRUE)
+datExprBRO_gonad= as.data.frame(t(BRO_gonad_data[, -c(1)]));
+names(datExprBRO_gonad) = BRO_gonad_data$OG;
+rownames(datExprBRO_gonad) = names(BRO_gonad_data)[-c(1)];
+gsg_BRO_gonad = goodSamplesGenes(datExprBRO_gonad, verbose = 3);
+
+if (!gsg_BRO_gonad$allOK)
+{
+# Optionally, print the gene and sample names that were removed:
+  if (sum(!gsg_BRO_gonad$goodGenes)>0)
+    printFlush(paste("Removing genes:", paste(names(datExprBRO_gonad)[!gsg_BRO_gonad$goodGenes], collapse = ", ")));
+  if (sum(!gsg_BRO_gonad$goodSamples)>0)
+    printFlush(paste("Removing samples:", paste(rownames(datExprBRO_gonad)[!gsg_BRO_gonad$goodSamples], collapse = ", ")));
+# Remove the offending genes and samples from the data:
+  datExprBRO_gonad = datExprBRO_gonad[gsg_BRO_gonad$goodSamples, gsg_BRO_gonad$goodGenes]
+}
+
+colorsBGM = moduleColors
+
+setLabels = c("BGM", "BRO");
+multiExprBRO = list(BGM= list(data = datExpr0), BRO = list(data = datExprBRO_gonad));
+multiColor = list(BGM = colorsBGM);
+
+system.time( {
+  mp_bro_gonad = modulePreservation(multiExprBRO, multiColor, networkType = "signed", maxModuleSize = 6000,
+                                    referenceNetworks = 1,
+                                    nPermutations = 500,
+                                    randomSeed = 1,
+                                    quickCor = 1,
+                                    verbose = 3)
+} );
+
+ref = 1
+test = 2
+statsObs_bro = cbind(mp_bro_gonad$quality$observed[[ref]][[test]][, -1], mp_bro_gonad$preservation$observed[[ref]][[test]][, -1])
+statsZ_bro = cbind(mp_bro_gonad$quality$Z[[ref]][[test]][, -1], mp_bro_gonad$preservation$Z[[ref]][[test]][, -1]);
+
+bro_preservation_stats <- print( cbind(statsObs_bro[, c("medianRank.pres", "medianRank.qual")],
+                                       signif(statsZ_bro[, c("Zsummary.pres", "Zsummary.qual")], 2)) )
+
+# Module labels and module sizes are also contained in the results
+modColors = rownames(mp_bro_gonad$preservation$observed[[ref]][[test]])
+moduleSizes = mp_bro_gonad$preservation$Z[[ref]][[test]][, 1];
+# leave grey and gold modules out
+plotMods = !(modColors %in% c("grey", "gold"));
+# Text labels for points
+text = modColors[plotMods];
+# Auxiliary convenience variable
+plotData = cbind(mp_bro_gonad$preservation$observed[[ref]][[test]][, 2], mp_bro_gonad$preservation$Z[[ref]][[test]][, 2])
+# Main titles for the plot
+mains = c("Preservation Median rank", "Preservation Zsummary");
+# Start the plot
+sizeGrWindow(10, 5);
+#pdf(fi="Plots/BxHLiverFemaleOnly-modulePreservation-Zsummary-medianRank.pdf", wi=10, h=5)
+par(mfrow = c(1,2))
+par(mar = c(4.5,4.5,2.5,1))
+for (p in 1:2)
+{
+  min = min(plotData[, p], na.rm = TRUE);
+  max = max(plotData[, p], na.rm = TRUE);
+  # Adjust ploting ranges appropriately
+  if (p==2)
+  {
+    if (min > -max/10) min = -max/10
+    ylim = c(min - 0.1 * (max-min), max + 0.1 * (max-min))
+  } else
+    ylim = c(max + 0.1 * (max-min), min - 0.1 * (max-min))
+  plot(moduleSizes[plotMods], plotData[plotMods, p], col = 1, bg = modColors[plotMods], pch = 21,
+       main = mains[p],
+       cex = 2.4,
+       ylab = mains[p], xlab = "Module size", log = "x",
+       ylim = ylim,
+       xlim = c(10, 2000), cex.lab = 1.2, cex.axis = 1.2, cex.main =1.4)
+  labelPoints(moduleSizes[plotMods], plotData[plotMods, p], text, cex = 1, offs = 0.08);
+  # For Zsummary, add threshold lines
+  if (p==2)
+  {
+    abline(h=0)
+    abline(h=2, col = "blue", lty = 2)
+    abline(h=10, col = "darkgreen", lty = 2)
+  }
+}
+```
+
+<br />
+<br />
+
+#### **calculate _B. atticus_ coexpression preservation (Figure 1)**
+
+```{r module preservation bat, fig.width=12, fig.height=12, message=FALSE, warning=FALSE}
+
+BAT_gonad_data = read.csv("BAT_RSEM.TMM.EXPR.matrix", sep =" ", header = TRUE)
+datExprBAT_gonad= as.data.frame(t(BAT_gonad_data[, -c(1)]));
+names(datExprBAT_gonad) = BAT_gonad_data$OG;
+rownames(datExprBAT_gonad) = names(BAT_gonad_data)[-c(1)];
+gsg_BAT_gonad = goodSamplesGenes(datExprBAT_gonad, verbose = 3);
+
+if (!gsg_BAT_gonad$allOK)
+{
+  # Optionally, print the gene and sample names that were removed:
+  if (sum(!gsg_BAT_gonad$goodGenes)>0)
+    printFlush(paste("Removing genes:", paste(names(datExprBAT_gonad)[!gsg_BAT_gonad$goodGenes], collapse = ", ")));
+  if (sum(!gsg_BAT_gonad$goodSamples)>0)
+    printFlush(paste("Removing samples:", paste(rownames(datExprBAT_gonad)[!gsg_BAT_gonad$goodSamples], collapse = ", ")));
+  # Remove the offending genes and samples from the data:
+  datExprBAT_gonad = datExprBAT_gonad[gsg_BAT_gonad$goodSamples, gsg_BAT_gonad$goodGenes]
+}
+
+colorsBGM = moduleColors
+
+setLabels = c("BGM", "BAT");
+multiExprBAT = list(BGM= list(data = datExpr0), BAT = list(data = datExprBAT_gonad));
+multiColor = list(BGM = colorsBGM);
+
+system.time( {
+  mp_BAT_gonad = modulePreservation(multiExprBAT, multiColor, networkType = "signed", maxModuleSize = 6000,
+                                    referenceNetworks = 1,
+                                    nPermutations = 500,
+                                    randomSeed = 1,
+                                    quickCor = 1,
+                                    verbose = 3)
+} );
+
+ref = 1
+test = 2
+statsObs_bat = cbind(mp_BAT_gonad$quality$observed[[ref]][[test]][, -1], mp_BAT_gonad$preservation$observed[[ref]][[test]][, -1])
+statsZ_bat = cbind(mp_BAT_gonad$quality$Z[[ref]][[test]][, -1], mp_BAT_gonad$preservation$Z[[ref]][[test]][, -1]);
+
+bat_preservation_stats <- print( cbind(statsObs_bat[, c("medianRank.pres", "medianRank.qual")],
+                                       signif(statsZ_bat[, c("Zsummary.pres", "Zsummary.qual")], 2)) )
+
+# Module labels and module sizes are also contained in the results
+modColors = rownames(mp_BAT_gonad$preservation$observed[[ref]][[test]])
+moduleSizes = mp_BAT_gonad$preservation$Z[[ref]][[test]][, 1];
+# leave grey and gold modules out
+plotMods = !(modColors %in% c("grey", "gold"));
+# Text labels for points
+text = modColors[plotMods];
+# Auxiliary convenience variable
+plotData = cbind(mp_BAT_gonad$preservation$observed[[ref]][[test]][, 2], mp_BAT_gonad$preservation$Z[[ref]][[test]][, 2])
+# Main titles for the plot
+mains = c("Preservation Median rank", "Preservation Zsummary");
+# Start the plot
+sizeGrWindow(10, 5);
+#pdf(fi="Plots/BxHLiverFemaleOnly-modulePreservation-Zsummary-medianRank.pdf", wi=10, h=5)
+par(mfrow = c(1,2))
+par(mar = c(4.5,4.5,2.5,1))
+for (p in 1:2)
+{
+  min = min(plotData[, p], na.rm = TRUE);
+  max = max(plotData[, p], na.rm = TRUE);
+  # Adjust ploting ranges appropriately
+  if (p==2)
+  {
+    if (min > -max/10) min = -max/10
+    ylim = c(min - 0.1 * (max-min), max + 0.1 * (max-min))
+  } else
+    ylim = c(max + 0.1 * (max-min), min - 0.1 * (max-min))
+  plot(moduleSizes[plotMods], plotData[plotMods, p], col = 1, bg = modColors[plotMods], pch = 21,
+       main = mains[p],
+       cex = 2.4,
+       ylab = mains[p], xlab = "Module size", log = "x",
+       ylim = ylim,
+       xlim = c(10, 2000), cex.lab = 1.2, cex.axis = 1.2, cex.main =1.4)
+  labelPoints(moduleSizes[plotMods], plotData[plotMods, p], text, cex = 1, offs = 0.08);
+  # For Zsummary, add threshold lines
+  if (p==2)
+  {
+    abline(h=0)
+    abline(h=2, col = "blue", lty = 2)
+    abline(h=10, col = "darkgreen", lty = 2)
+  }
+}
+```
+
+<br />
+<br />
+
+```{r heatmap preservation, fig.width=12, fig.height=6, message=FALSE, warning=FALSE}
+
+bat_preservation_stats <- print( cbind(statsObs_bat[, c("medianRank.pres", "medianRank.qual")],
+                                       signif(statsZ_bat[, c("Zsummary.pres", "Zsummary.qual")], 2)) )
+setDT(bat_preservation_stats, keep.rownames = TRUE)[]
+moduleTraitCor_pres_df <- moduleTraitCor_heat_df
+setDF(bat_preservation_stats)
+bat_preservation_stats <- bat_preservation_stats[order(bat_preservation_stats$rn),]
+moduleTraitCor_pres_df <- moduleTraitCor_pres_df[order(moduleTraitCor_pres_df$rn),]
+
+pres_bat <- ggplot(data = bat_preservation_stats, aes(x = rn, y = 1, fill = Zsummary.pres)) +
+  geom_tile(color = "white", size=10) +
+  scale_fill_gradient2(low = "lightgray", mid="white", high = "#ffc037", midpoint = 2,
+                       breaks = c(0, 2, 10, 20)) +
+  geom_text(aes(label = signif(medianRank.pres, 10)), size = 10) +
+  theme_minimal() + coord_equal() + 
+  theme(axis.title.x=element_blank()) + 
+  theme(axis.title.y=element_blank()) + 
+  theme(plot.title = element_text(size=16,face="bold")) +
+  labs(title = "WGCNA modules preservation in Bacillus atticus") + 
+  theme(axis.text=element_text(size=12), axis.title=element_text(size=16,face="bold")) +
+  theme(axis.text.y=element_blank())
+
+bro_preservation_stats <- print( cbind(statsObs_bro[, c("medianRank.pres", "medianRank.qual")],
+                                       signif(statsZ_bro[, c("Zsummary.pres", "Zsummary.qual")], 2)) )
+setDT(bro_preservation_stats, keep.rownames = TRUE)[]
+moduleTraitCor_pres_df <- moduleTraitCor_heat_df
+#bro_preservation_stats <- bro_preservation_stats[-c(4), ]
+setDF(bro_preservation_stats)
+bro_preservation_stats["6", "Zsummary.pres"] <- 21
+bro_preservation_stats["4", "Zsummary.pres"] <- -3
+bro_preservation_stats <- bro_preservation_stats[order(bro_preservation_stats$rn),]
+moduleTraitCor_pres_df <- moduleTraitCor_pres_df[order(moduleTraitCor_pres_df$rn),]
+
+pres_bro <- ggplot(data = bro_preservation_stats, aes(x = rn, y = 1, fill = Zsummary.pres)) +
+  geom_tile(color = "white", size=10) +
+  scale_fill_gradient2(low = "lightgray", mid="white", high = "#f55a4f", midpoint = 2,
+                       breaks = c(0, 2, 10, 20)) +
+  geom_text(aes(label = signif(medianRank.pres, 10)), size = 10) +
+  theme_minimal() + coord_equal() + 
+  theme(axis.title.x=element_blank()) + 
+  theme(axis.title.y=element_blank()) + 
+  theme(plot.title = element_text(size=16,face="bold")) +
+  labs(title = "WGCNA modules preservation in Bacillus rossius") + 
+  theme(axis.text=element_text(size=12), axis.title=element_text(size=16,face="bold")) +
+  theme(axis.text.y=element_blank())
+
+grid.arrange(pres_bro,pres_bat, ncol = 1)
+
+```
+
+#### **data wrangling pt.1**
+
+```{r data wrangling pt. 1, message=FALSE, warning=FALSE}
+tot <- read.table(file = "def.tab", sep = " ", header= TRUE)
+
+yellow_tot <- subset(tot, tot$OG %in% yellow_module)
+green_tot <- subset(tot, tot$OG %in% green_module)
+turquoise_tot <- subset(tot, tot$OG %in% turquoise_module)
+red_tot <- subset(tot, tot$OG %in% red_module)
+brown_tot <- subset(tot, tot$OG %in% brown_module)
+blue_tot <- subset(tot, tot$OG %in% blue_module)
+black_tot <- subset(tot, tot$OG %in% black_module)
+
+#
+
+male_gonad_network_tot <- rbind(yellow_tot,green_tot,turquoise_tot)
+male_gonad_network_genes <- male_gonad_network_tot$OG
+
+female_gonad_network_tot <- rbind(red_tot,brown_tot)
+female_gonad_network_genes <- female_gonad_network_tot$OG
+
+all_other_network_tot <- subset(tot, !(tot$OG %in% male_gonad_network_genes))
+all_other_network_tot <- subset(tot, !(tot$OG %in% female_gonad_network_genes))
+all_other_network_genes <- all_other_network_tot$OG
+
+#
+
+male_gonad_DE_tot_1 <- subset(tot, BGM_M_padj<0.005 & BGM_F_padj>0.005 & BGM_M_logFC > 0)
+male_gonad_DE_tot_2 <- subset(tot, BGM_M_padj<0.005 & BGM_M_logFC > 0 & BGM_F_padj<0.005 & BGM_M_logFC < 0)
+male_gonad_DE_tot <- rbind(male_gonad_DE_tot_1, male_gonad_DE_tot_2)
+
+male_gonad_DE_genes <-  male_gonad_DE_tot$OG
+
+female_gonad_DE_tot_1 <- subset(tot, BGM_F_padj<0.005 & BGM_M_padj>0.005 & BGM_F_logFC > 0)
+female_gonad_DE_tot_2 <- subset(tot, BGM_F_padj<0.005 & BGM_F_logFC > 0 & BGM_M_padj<0.005 & BGM_M_logFC < 0)
+female_gonad_DE_tot <- rbind(female_gonad_DE_tot_1, female_gonad_DE_tot_2)
+
+female_gonad_DE_genes <-  female_gonad_DE_tot$OG
+
+tot_gonad_DE_tot <- subset(tot, BGM_F_padj<0.005 & BGM_M_padj<0.005 & BGM_F_logFC > 0 & BGM_M_logFC > 0)
+tot_gonad_DE_genes <-  tot_gonad_DE_tot$OG
+
+all_other_DE_tot <- subset(tot, !(tot$OG %in% female_gonad_DE_genes))
+all_other_DE_tot <- subset(tot, !(tot$OG %in% male_gonad_DE_genes))
+all_other_DE_tot <- subset(tot, !(tot$OG %in% tot_gonad_DE_genes))
+all_other_DE_genes <- all_other_DE_tot$OG
+```
+
+<br />
+<br />
+
+#### **plot dNdS (Figure 2)**
+
+```{r dNdS pt.1, message=FALSE, fig.width=12, fig.height=12, warning=FALSE}
+
+my_comparisons <- list( c("1 Bacillus grandii", "2 Bacillus atticus"), c("3 Bacillus rossius", "2 Bacillus atticus"), c("1 Bacillus grandii", "3 Bacillus rossius") )
+
+m_module_dNdS_bgm <- subset(male_gonad_network_tot, BGM_dN<3 & BGM_dNdS<1)
+m_module_dNdS_bgm <- m_module_dNdS_bgm$BGM_dNdS
+m_module_dNdS_bgm <- data.frame(group = "1 Bacillus grandii", value = m_module_dNdS_bgm)
+m_module_dNdS_bat <- subset(male_gonad_network_tot, BAT_dN<3  & BAT_dNdS<1)
+m_module_dNdS_bat <- m_module_dNdS_bat$BAT_dNdS
+m_module_dNdS_bat <- data.frame(group = "2 Bacillus atticus", value = m_module_dNdS_bat)
+m_module_dNdS_bro <- subset(male_gonad_network_tot, BRO_dN<3 & BRO_dNdS<1)
+m_module_dNdS_bro <- m_module_dNdS_bro$BRO_dNdS
+m_module_dNdS_bro <- data.frame(group = "3 Bacillus rossius", value = m_module_dNdS_bro)
+m_module_dNdS_plot.data <- rbind(m_module_dNdS_bgm,m_module_dNdS_bat,m_module_dNdS_bro)
+m_module_dNdS_plot <- ggplot(m_module_dNdS_plot.data, aes(x=group, y=value, fill=group)) + geom_boxplot(width=0.2, outlier.size=0, alpha = 0.7, outlier.shape=NA) +
+  labs(x=" ", y = "dNdS",  title = "genes in modules associated with B.grandii male gonad") + theme_classic() +
+  theme(axis.text=element_text(size=10), axis.title=element_text(size=12,face="bold"), title=element_text(size=16,face="bold")) + ylim(0, 1) +
+  stat_compare_means(comparisons = my_comparisons, label = "p.signif", label.y = c(0.6,0.7,0.8)) + 
+  scale_fill_manual(values=c("#04b4d6", "#ffc037", "#f55a4f")) + theme(legend.position = "none") +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(colour = "black", size=1)) + 
+  coord_fixed(ratio=3)
+
+f_module_dNdS_bgm <- subset(female_gonad_network_tot, BGM_dN<3 & BGM_dNdS<1)
+f_module_dNdS_bgm <- f_module_dNdS_bgm$BGM_dNdS
+f_module_dNdS_bgm <- data.frame(group = "1 Bacillus grandii", value = f_module_dNdS_bgm)
+f_module_dNdS_bat <- subset(female_gonad_network_tot, BAT_dN<3  & BAT_dNdS<1)
+f_module_dNdS_bat <- f_module_dNdS_bat$BAT_dNdS
+f_module_dNdS_bat <- data.frame(group = "2 Bacillus atticus", value = f_module_dNdS_bat)
+f_module_dNdS_bro <- subset(female_gonad_network_tot, BRO_dN<3 & BRO_dNdS<1)
+f_module_dNdS_bro <- f_module_dNdS_bro$BRO_dNdS
+f_module_dNdS_bro <- data.frame(group = "3 Bacillus rossius", value = f_module_dNdS_bro)
+f_module_dNdS_plot.data <- rbind(f_module_dNdS_bgm,f_module_dNdS_bat,f_module_dNdS_bro)
+f_module_dNdS_plot <- ggplot(f_module_dNdS_plot.data, aes(x=group, y=value, fill=group)) + geom_boxplot(width=0.2, outlier.size=0, alpha = 0.7, outlier.shape=NA) +
+  labs(x=" ", y = "dNdS",  title = "genes in modules associated with B.grandii female gonad") + theme_classic() +
+  theme(axis.text=element_text(size=10), axis.title=element_text(size=12,face="bold"), title=element_text(size=16,face="bold")) + ylim(0, 1) +
+  stat_compare_means(comparisons = my_comparisons, label = "p.signif", label.y = c(0.6,0.7,0.8)) + 
+  scale_fill_manual(values=c("#04b4d6", "#ffc037", "#f55a4f")) + theme(legend.position = "none") +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(colour = "black", size=1)) + 
+  coord_fixed(ratio=3)
+
+nonmodule_dNdS_bgm <- subset(all_other_network_tot, BGM_dN<3 & BGM_dNdS<1)
+nonmodule_dNdS_bgm <- nonmodule_dNdS_bgm$BGM_dNdS
+nonmodule_dNdS_bgm <- data.frame(group = "1 Bacillus grandii", value = nonmodule_dNdS_bgm)
+nonmodule_dNdS_bat <- subset(all_other_network_tot, BAT_dN<3  & BAT_dNdS<1)
+nonmodule_dNdS_bat <- nonmodule_dNdS_bat$BAT_dNdS
+nonmodule_dNdS_bat <- data.frame(group = "2 Bacillus atticus", value = nonmodule_dNdS_bat)
+nonmodule_dNdS_bro <- subset(all_other_network_tot, BRO_dN<3 & BRO_dNdS<1)
+nonmodule_dNdS_bro <- nonmodule_dNdS_bro$BRO_dNdS
+nonmodule_dNdS_bro <- data.frame(group = "3 Bacillus rossius", value = nonmodule_dNdS_bro)
+nonmodule_dNdS_plot.data <- rbind(nonmodule_dNdS_bgm,nonmodule_dNdS_bat,nonmodule_dNdS_bro)
+nonmodule_dNdS_plot <- ggplot(nonmodule_dNdS_plot.data, aes(x=group, y=value, fill=group)) + geom_boxplot(width=0.2, outlier.size=0, alpha = 0.7, outlier.shape=NA) +
+  labs(x=" ", y = "dNdS",  title = "genes non related to B. grandii gonad modules")+ theme_classic() +
+  theme(axis.text=element_text(size=10), axis.title=element_text(size=12,face="bold"), title=element_text(size=16,face="bold")) + ylim(0, 1) +
+  stat_compare_means(comparisons = my_comparisons, label = "p.signif", label.y = c(0.6,0.7,0.8)) + 
+  scale_fill_manual(values=c("#04b4d6", "#ffc037", "#f55a4f")) + theme(legend.position = "none") +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(colour = "black", size=1)) + 
+  coord_fixed(ratio=3)
+
+###
+
+my_comparisons <- list( c("female gonads", "male gonads"), c("gonads unrelated", "male gonads"), c("gonads unrelated", "female gonads") )
+
+# 
+
+(shapiro.test(m_module_dNdS_bgm$value))$p.value
+(shapiro.test(f_module_dNdS_bgm$value))$p.value
+(shapiro.test(nonmodule_dNdS_bgm$value))$p.value
+
+(shapiro.test(m_module_dNdS_bat$value))$p.value
+(shapiro.test(f_module_dNdS_bat$value))$p.value
+(shapiro.test(nonmodule_dNdS_bat$value))$p.value
+
+(shapiro.test(nonmodule_dNdS_bro$value))$p.value
+(shapiro.test(nonmodule_dNdS_bro$value))$p.value
+(shapiro.test(nonmodule_dNdS_bro$value))$p.value
+
+m_module_dNdS_bgm <- subset(male_gonad_network_tot, BGM_dN<3 & BGM_dNdS<1)
+m_module_dNdS_bgm <- m_module_dNdS_bgm$BGM_dNdS
+m_module_dNdS_bgm <- data.frame(group = "m", value = m_module_dNdS_bgm)
+m_module_dNdS_bat <- subset(male_gonad_network_tot, BAT_dS>0.001 & BAT_dN<3  & BAT_dNdS<1)
+m_module_dNdS_bat <- m_module_dNdS_bat$BAT_dNdS
+m_module_dNdS_bat <- data.frame(group = "m", value = m_module_dNdS_bat)
+m_module_dNdS_bro <- subset(male_gonad_network_tot,BRO_dN<3 & BRO_dNdS<1)
+m_module_dNdS_bro <- m_module_dNdS_bro$BRO_dNdS
+m_module_dNdS_bro <- data.frame(group = "m", value = m_module_dNdS_bro)
+
+f_module_dNdS_bgm <- subset(female_gonad_network_tot, BGM_dN<3 & BGM_dNdS<1)
+f_module_dNdS_bgm <- f_module_dNdS_bgm$BGM_dNdS
+f_module_dNdS_bgm <- data.frame(group = "f", value = f_module_dNdS_bgm)
+f_module_dNdS_bat <- subset(female_gonad_network_tot,BAT_dN<3  & BAT_dNdS<1)
+f_module_dNdS_bat <- f_module_dNdS_bat$BAT_dNdS
+f_module_dNdS_bat <- data.frame(group = "f", value = f_module_dNdS_bat)
+f_module_dNdS_bro <- subset(female_gonad_network_tot, BRO_dN<3 & BRO_dNdS<1)
+f_module_dNdS_bro <- f_module_dNdS_bro$BRO_dNdS
+f_module_dNdS_bro <- data.frame(group = "f", value = f_module_dNdS_bro)
+
+nonmodule_dNdS_bgm <- subset(all_other_network_tot, BGM_dN<3 & BGM_dNdS<1)
+nonmodule_dNdS_bgm <- nonmodule_dNdS_bgm$BGM_dNdS
+nonmodule_dNdS_bgm <- data.frame(group = "o", value = nonmodule_dNdS_bgm)
+nonmodule_dNdS_bat <- subset(all_other_network_tot, BAT_dN<3  & BAT_dNdS<1)
+nonmodule_dNdS_bat <- nonmodule_dNdS_bat$BAT_dNdS
+nonmodule_dNdS_bat <- data.frame(group = "o", value = nonmodule_dNdS_bat)
+nonmodule_dNdS_bro <- subset(all_other_network_tot, BRO_dN<3 & BRO_dNdS<1)
+nonmodule_dNdS_bro <- nonmodule_dNdS_bro$BRO_dNdS
+nonmodule_dNdS_bro <- data.frame(group = "o", value = nonmodule_dNdS_bro)
+
+dNdS_plot_bro.data <- rbind(m_module_dNdS_bro,f_module_dNdS_bro,nonmodule_dNdS_bro)
+dNdS_plot_bro.data[dNdS_plot_bro.data == "m"] <- "male gonads"
+dNdS_plot_bro.data[dNdS_plot_bro.data == "f"] <- "female gonads"
+dNdS_plot_bro.data[dNdS_plot_bro.data == "o"] <- "gonads unrelated"
+dNdS_plot_bro <- ggplot(dNdS_plot_bro.data, aes(x=group, y=value, fill=group)) + geom_boxplot(width=0.2, outlier.size=0, alpha = 0.7, outlier.shape=NA) +
+  stat_compare_means(comparisons = my_comparisons, label = "p.signif", label.y = c(0.6,0.7,0.8)) + 
+  labs(x=" ", y = "dNdS",  title = "Bacillus rossius")+ theme_classic() +
+  theme(axis.text=element_text(size=10), axis.title=element_text(size=12,face="bold"), title=element_text(size=16,face="bold")) + ylim(0, 1) +
+  scale_fill_manual(values=c("#f55a4f", "#f55a4f", "#f55a4f")) + theme(legend.position = "none") +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(colour = "black", size=1)) + 
+  coord_fixed(ratio=3)
+
+dNdS_plot_bat.data <- rbind(m_module_dNdS_bat,f_module_dNdS_bat,nonmodule_dNdS_bat)
+dNdS_plot_bat.data[dNdS_plot_bat.data == "m"] <- "male gonads"
+dNdS_plot_bat.data[dNdS_plot_bat.data == "f"] <- "female gonads"
+dNdS_plot_bat.data[dNdS_plot_bat.data == "o"] <- "gonads unrelated"
+dNdS_plot_bat <- ggplot(dNdS_plot_bat.data, aes(x=group, y=value, fill=group)) + geom_boxplot(width=0.2, outlier.size=0, alpha = 0.7, outlier.shape=NA) +
+  stat_compare_means(comparisons = my_comparisons, label = "p.signif", label.y = c(0.6,0.7,0.8)) + 
+  labs(x=" ", y = "dNdS",  title = "Bacillus atticus")+ theme_classic() +
+  theme(axis.text=element_text(size=10), axis.title=element_text(size=12,face="bold"), title=element_text(size=16,face="bold")) + ylim(0, 1) +
+  scale_fill_manual(values=c("#ffc037", "#ffc037", "#ffc037")) + theme(legend.position = "none") +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(colour = "black", size=1)) + 
+  coord_fixed(ratio=3)
+
+dNdS_plot_bgm.data <- rbind(m_module_dNdS_bgm,f_module_dNdS_bgm,nonmodule_dNdS_bgm)
+dNdS_plot_bgm.data[dNdS_plot_bgm.data == "m"] <- "male gonads"
+dNdS_plot_bgm.data[dNdS_plot_bgm.data == "f"] <- "female gonads"
+dNdS_plot_bgm.data[dNdS_plot_bgm.data == "o"] <- "gonads unrelated"
+dNdS_plot_bgm <- ggplot(dNdS_plot_bgm.data, aes(x=group, y=value, fill=group)) + geom_boxplot(width=0.2, outlier.size=0, alpha = 0.7, outlier.shape=NA) +
+  stat_compare_means(comparisons = my_comparisons, label = "p.signif", label.y = c(0.6,0.7,0.8)) + 
+  labs(x=" ", y = "dNdS",  title = "Bacillus grandii")+ theme_classic() +
+  theme(axis.text=element_text(size=10), axis.title=element_text(size=12,face="bold"), title=element_text(size=16,face="bold")) + ylim(0, 1) +
+  scale_fill_manual(values=c("#04b4d6", "#04b4d6", "#04b4d6")) + theme(legend.position = "none") +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(colour = "black", size=1)) + 
+  coord_fixed(ratio=3)
+
+###
+
+grid.arrange(nonmodule_dNdS_plot,
+             f_module_dNdS_plot,
+             m_module_dNdS_plot,
+             dNdS_plot_bro,
+             dNdS_plot_bat,
+             dNdS_plot_bgm,
+             ncol=3)
+```
+
+<br />
+<br />
+
+#### **calculate _B. atticus_ gene connectivity**
+
+```{r gene connectivity calculation, message=FALSE, warning=FALSE}
+adj_bgm <- adjacency(datExpr0, selectCols = NULL,  type = "signed", 
+                     power = 19,
+                     corFnc = "cor", corOptions = "use = 'p', method = 'spearman'",
+                     distFnc = "dist", distOptions = "method = 'euclidean'")
+intramodularConnectivity_bgm <- intramodularConnectivity(adj_bgm, mergedColors, scaleByMax = FALSE)
+intramodularConnectivity_bgm['OG'] <- row.names(intramodularConnectivity_bgm)
+```
+
+<br />
+<br />
+
+#### **data wrangling pt.2**
+
+```{r data wrangling pt. 2, message=FALSE, warning=FALSE}
+tot <- read.table(file = "def.tab", sep = " ", header= TRUE)
+
+yellow_tot <- subset(tot, tot$OG %in% yellow_module)
+green_tot <- subset(tot, tot$OG %in% green_module)
+turquoise_tot <- subset(tot, tot$OG %in% turquoise_module)
+red_tot <- subset(tot, tot$OG %in% red_module)
+brown_tot <- subset(tot, tot$OG %in% brown_module)
+blue_tot <- subset(tot, tot$OG %in% blue_module)
+black_tot <- subset(tot, tot$OG %in% black_module)
+
+#
+
+male_gonad_network_tot <- rbind(yellow_tot,green_tot,turquoise_tot)
+male_gonad_network_genes <- male_gonad_network_tot$OG
+
+female_gonad_network_tot <- rbind(red_tot,brown_tot)
+female_gonad_network_genes <- female_gonad_network_tot$OG
+
+all_other_network_tot <- subset(tot, !(tot$OG %in% male_gonad_network_genes))
+all_other_network_tot <- subset(all_other_network_tot, !(tot$OG %in% female_gonad_network_genes))
+all_other_network_genes <- all_other_network_tot$OG
+
+#
+
+con_tot <- merge(intramodularConnectivity_bgm, tot, by="OG")
+names(con_tot)[names(con_tot) == "kTotal"] <- "kTotal_bgm"
+names(con_tot)[names(con_tot) == "kWithin"] <- "kWithin_bgm"
+names(con_tot)[names(con_tot) == "kOut"] <- "kOut_bgm"
+names(con_tot)[names(con_tot) == "kDiff"] <- "kDiff_bgm"
+
+con_tot_mod_other <- subset(con_tot, con_tot$OG %in% all_other_network_genes)
+
+con_tot_DE <- subset(con_tot, con_tot$OG %in% male_gonad_DE_genes)
+con_tot_DE_other <- subset(con_tot, !(con_tot$OG %in% male_gonad_DE_genes))
+
+mg_module_genes <- c(turquoise_module,green_module,yellow_module)
+mg_module_genes_con_tot <- subset(con_tot, tot$OG %in% mg_module_genes)
+
+fg_module_genes <- c(brown_module, red_module)
+fg_module_genes_con_tot <- subset(con_tot, tot$OG %in% fg_module_genes)
+```
+
+<br />
+<br />
+
+#### **gene connectivity VS LogFC**
+
+```{r gene connectivity VS LogFC, fig.width=30, fig.height=20, message=FALSE, warning=FALSE}
+
+# bgm VS bat
+bgm_kTotal_bat_LogFC_spearman_mg_modules <- cor.test(mg_module_genes_con_tot$kTotal_bgm , mg_module_genes_con_tot$BAT_logFC, method = "spearman", continuity = FALSE, conf.level = 0.95)
+bgm_kTotal_bat_LogFC_plot_mg_modules <- ggplot() + 
+  geom_point(data=mg_module_genes_con_tot, aes(kTotal_bgm, BAT_logFC, color=BAT_padj), size=5, alpha = 0.5, shape= 20) +
+  labs(x="total connectivity B. grandii (sex)", y = "LogFC B. atticus (asex)", title = paste0(
+    "genes in male gonad modules     pval: ", round(bgm_kTotal_bat_LogFC_spearman_mg_modules$p.value,digits = 3), "     rho: ", round(bgm_kTotal_bat_LogFC_spearman_mg_modules$estimate,digits = 3))) + 
+  theme_classic() + theme(axis.text=element_text(size=12), axis.title=element_text(size=16,face="bold")) + 
+  geom_hline(yintercept=0, color = "black",size=0.5, alpha = 0.2) + 
+  ylim(-7, +7) + scale_colour_gradientn(colours = c("#ffc037", "white","white","white","white"), breaks = 0.01, name = "padj") +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(colour = "black", size=1)) +
+  theme(plot.margin = unit(c(1,1,1,1), "cm")) + theme(plot.title = element_text(size=16,face="bold"))
+
+bgm_kTotal_bat_LogFC_spearman_fg_modules <- cor.test(fg_module_genes_con_tot$kTotal_bgm , fg_module_genes_con_tot$BAT_logFC, method = "spearman", continuity = FALSE, conf.level = 0.95)
+bgm_kTotal_bat_LogFC_plot_fg_modules <- ggplot() +
+  geom_point(data=fg_module_genes_con_tot, aes(kTotal_bgm, BAT_logFC, color=BAT_padj), size=5, alpha = 0.5, shape= 20) +
+  labs(x="total connectivity B. grandii (sex)", y = "LogFC B. atticus (asex)", title = paste0(
+    "genes in female gonad modules     pval: ", round(bgm_kTotal_bat_LogFC_spearman_fg_modules$p.value,digits = 3), "     rho: ", round(bgm_kTotal_bat_LogFC_spearman_fg_modules$estimate,digits = 3))) + 
+  theme_classic() + theme(axis.text=element_text(size=12), axis.title=element_text(size=16,face="bold")) + 
+  geom_hline(yintercept=0, color = "black",size=0.5, alpha = 0.2) + 
+  ylim(-7, +7) + scale_colour_gradientn(colours = c("#ffc037", "white","white","white","white"), breaks = 0.01, name = "padj") +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(colour = "black", size=1)) +
+  theme(plot.margin = unit(c(1,1,1,1), "cm")) + theme(plot.title = element_text(size=16,face="bold"))
+
+bgm_kTotal_bat_LogFC_spearman_nonmodules <- cor.test(con_tot_mod_other$kTotal_bgm , con_tot_mod_other$BAT_logFC, method = "spearman", continuity = FALSE, conf.level = 0.95)
+bgm_kTotal_bat_LogFC_plot_nonmodules <- ggplot() +
+  geom_point(data=con_tot_mod_other, aes(kTotal_bgm, BAT_logFC,color=BAT_padj), size=5, alpha = 0.5, shape= 20) +
+  labs(x="total connectivity B. grandii (sex)", y = "LogFC B. atticus (asex)", title = paste0(
+    "all other genes     pval: ", round(bgm_kTotal_bat_LogFC_spearman_nonmodules$p.value,digits = 3), "     rho: ", round(bgm_kTotal_bat_LogFC_spearman_nonmodules$estimate,digits = 3))) + 
+  theme_classic() + theme(axis.text=element_text(size=12), axis.title=element_text(size=16,face="bold")) + 
+  geom_hline(yintercept=0, color = "black",size=0.5, alpha = 0.2) + 
+  ylim(-7, +7) + scale_colour_gradientn(colours = c("#ffc037", "white","white","white","white"), breaks = 0.01, name = "padj") +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(colour = "black", size=1)) +
+  theme(plot.margin = unit(c(1,1,1,1), "cm")) + theme(plot.title = element_text(size=16,face="bold"))
+
+# bgm VS bro
+
+bgm_kTotal_bro_LogFC_spearman_mg_modules <- cor.test(mg_module_genes_con_tot$kTotal_bgm , mg_module_genes_con_tot$BRO_logFC, method = "spearman", continuity = FALSE, conf.level = 0.95)
+bgm_kTotal_bro_LogFC_plot_mg_modules <- ggplot() +
+  geom_point(data=mg_module_genes_con_tot, aes(kTotal_bgm, BRO_logFC, color=BRO_padj), size=5, alpha = 0.5, shape= 20) +
+  labs(x="total connectivity B. grandii (sex)", y = "LogFC B. rossius (asex)", title = paste0(
+    "genes in male gonad modules     pval: ", round(bgm_kTotal_bro_LogFC_spearman_mg_modules$p.value,digits = 3), "     rho: ", round(bgm_kTotal_bro_LogFC_spearman_mg_modules$estimate,digits = 3))) + 
+  theme_classic() + theme(axis.text=element_text(size=12), axis.title=element_text(size=16,face="bold")) + 
+  geom_hline(yintercept=0, color = "black",size=0.5, alpha = 0.2) + 
+  ylim(-7, +7) + scale_colour_gradientn(colours = c("#f55a4f", "white","white","white","white"), breaks = 0.01, name = "padj") +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(colour = "black", size=1)) +
+  theme(plot.margin = unit(c(1,1,1,1), "cm")) + theme(plot.title = element_text(size=16,face="bold"))
+
+bgm_kTotal_bro_LogFC_spearman_fg_modules <- cor.test(fg_module_genes_con_tot$kTotal_bgm , fg_module_genes_con_tot$BRO_logFC, method = "spearman", continuity = FALSE, conf.level = 0.95)
+bgm_kTotal_bro_LogFC_plot_fg_modules <- ggplot() +
+  geom_point(data=fg_module_genes_con_tot, aes(kTotal_bgm, BRO_logFC, color=BRO_padj), size=5, alpha = 0.5, shape= 20) +
+  labs(x="total connectivity B. grandii (sex)", y = "LogFC B. rossius (asex)", title = paste0(
+    "genes in female gonad modules     pval: ", round(bgm_kTotal_bro_LogFC_spearman_fg_modules$p.value,digits = 3), "     rho: ", round(bgm_kTotal_bro_LogFC_spearman_fg_modules$estimate,digits = 3))) + 
+  theme_classic() + theme(axis.text=element_text(size=12), axis.title=element_text(size=16,face="bold")) + 
+  geom_hline(yintercept=0, color = "black",size=0.5, alpha = 0.2) + 
+  ylim(-7, +7) + scale_colour_gradientn(colours = c("#f55a4f", "white","white","white","white"), breaks = 0.01, name = "padj") +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(colour = "black", size=1)) +
+  theme(plot.margin = unit(c(1,1,1,1), "cm")) + theme(plot.title = element_text(size=16,face="bold"))
+
+bgm_kTotal_bro_LogFC_spearman_nonmodules <- cor.test(con_tot_mod_other$kTotal_bgm , con_tot_mod_other$BRO_logFC, method = "spearman", continuity = FALSE, conf.level = 0.95)
+bgm_kTotal_bro_LogFC_plot_nonmodules <- ggplot() +
+  geom_point(data=con_tot_mod_other, aes(kTotal_bgm, BRO_logFC, color=BRO_padj), size=5, alpha = 0.5, shape= 20) +
+  labs(x="total connectivity B. grandii (sex)", y = "LogFC B. rossius (asex)", title = paste0(
+    "all other genes     pval: ", round(bgm_kTotal_bro_LogFC_spearman_nonmodules$p.value,digits = 3), "     rho: ", round(bgm_kTotal_bro_LogFC_spearman_nonmodules$estimate,digits = 3))) + 
+  theme_classic() + theme(axis.text=element_text(size=12), axis.title=element_text(size=16,face="bold")) + 
+  geom_hline(yintercept=0, color = "black",size=0.5, alpha = 0.2) + 
+  ylim(-7, +7) + scale_colour_gradientn(colours = c("#f55a4f","white","white","white","white"), breaks = 0.01, name = "padj") +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(colour = "black", size=1)) +
+  theme(plot.margin = unit(c(1,1,1,1), "cm")) + theme(plot.title = element_text(size=16,face="bold"))
+
+# bgm VS bgm F
+
+bgm_kTotal_bgm_LogFC_spearman_mg_modules_f <- cor.test(mg_module_genes_con_tot$kTotal_bgm , mg_module_genes_con_tot$BGM_F_logFC, method = "spearman", continuity = FALSE, conf.level = 0.95)
+bgm_kTotal_bgm_LogFC_plot_mg_modules_f <- ggplot() +
+  geom_point(data=mg_module_genes_con_tot, aes(kTotal_bgm, BGM_F_logFC, color=BGM_F_padj), size=5, alpha = 0.5, shape= 20) +
+  labs(x="total connectivity B. grandii (sex)", y = "LogFC B. grandii F  (sex)", title = paste0(
+    "genes in male gonad modules     pval: ", round(bgm_kTotal_bgm_LogFC_spearman_mg_modules_f$p.value,digits = 3), "     rho: ", round(bgm_kTotal_bgm_LogFC_spearman_mg_modules_f$estimate,digits = 3))) + 
+  theme_classic() + theme(axis.text=element_text(size=12), axis.title=element_text(size=16,face="bold")) + 
+  geom_hline(yintercept=0, color = "black",size=0.5, alpha = 0.2) + 
+  ylim(-7, +7) + scale_colour_gradientn(colours = c("#04b4d6", "white","white","white","white"), breaks = 0.01, name = "padj") +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(colour = "black", size=1)) +
+  theme(plot.margin = unit(c(1,1,1,1), "cm")) + theme(plot.title = element_text(size=16,face="bold")) 
+
+bgm_kTotal_bgm_LogFC_spearman_fg_modules_f <- cor.test(fg_module_genes_con_tot$kTotal_bgm , fg_module_genes_con_tot$BGM_F_logFC, method = "spearman", continuity = FALSE, conf.level = 0.95)
+bgm_kTotal_bgm_LogFC_plot_fg_modules_f <- ggplot() +
+  geom_point(data=fg_module_genes_con_tot, aes(kTotal_bgm, BGM_F_logFC, color=BGM_F_padj), size=5, alpha = 0.5, shape= 20) +
+  labs(x="total connectivity B. grandii (sex)", y = "LogFC B. grandii F  (sex)", title = paste0(
+    "genes in female gonad modules     pval: ", round(bgm_kTotal_bgm_LogFC_spearman_fg_modules_f$p.value,digits = 3), "     rho: ", round(bgm_kTotal_bgm_LogFC_spearman_fg_modules_f$estimate,digits = 3))) + 
+  theme_classic() + theme(axis.text=element_text(size=12), axis.title=element_text(size=16,face="bold")) + 
+  geom_hline(yintercept=0, color = "black",size=0.5, alpha = 0.2) + 
+  ylim(-7, +7) + scale_colour_gradientn(colours = c("#04b4d6", "white","white","white","white"), breaks = 0.01, name = "padj") +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(colour = "black", size=1)) +
+  theme(plot.margin = unit(c(1,1,1,1), "cm")) + theme(plot.title = element_text(size=16,face="bold"))
+
+bgm_kTotal_bgm_LogFC_spearman_nonmodules_f <- cor.test(con_tot_mod_other$kTotal_bgm , con_tot_mod_other$BGM_F_logFC, method = "spearman", continuity = FALSE, conf.level = 0.95)
+bgm_kTotal_bgm_LogFC_plot_nonmodules_f <- ggplot() +
+  geom_point(data=con_tot_mod_other, aes(kTotal_bgm, BGM_F_logFC, color=BGM_F_padj), size=5, alpha = 0.5, shape= 20) +
+  labs(x="total connectivity B. grandii (sex)", y = "LogFC B. grandii F (sex)", title = paste0(
+    "all other genes     pval: ", round(bgm_kTotal_bgm_LogFC_spearman_nonmodules_f$p.value,digits = 3), "     rho: ", round(bgm_kTotal_bgm_LogFC_spearman_nonmodules_f$estimate,digits = 3))) + 
+  theme_classic() + theme(axis.text=element_text(size=12), axis.title=element_text(size=16,face="bold")) + 
+  geom_hline(yintercept=0, color = "black",size=0.5, alpha = 0.2) + 
+  ylim(-7, +7) + scale_colour_gradientn(colours = c("#04b4d6", "white","white","white","white"), breaks = 0.01, name = "padj") +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(colour = "black", size=1)) +
+  theme(plot.margin = unit(c(1,1,1,1), "cm")) + theme(plot.title = element_text(size=16,face="bold"))
+
+# bgm VS bgm M
+
+bgm_kTotal_bgm_LogFC_spearman_mg_modules_m <- cor.test(mg_module_genes_con_tot$kTotal_bgm , mg_module_genes_con_tot$BGM_M_logFC, method = "spearman", continuity = FALSE, conf.level = 0.95)
+bgm_kTotal_bgm_LogFC_plot_mg_modules_m <- ggplot() +
+  geom_point(data=mg_module_genes_con_tot, aes(kTotal_bgm, BGM_M_logFC, color=BGM_M_padj), size=5, alpha = 0.5, shape= 20) +
+  labs(x="total connectivity B. grandii (sex)", y = "LogFC B. grandii M (sex)", title = paste0(
+    "genes in male gonad modules     pval: ", round(bgm_kTotal_bgm_LogFC_spearman_mg_modules_m$p.value,digits = 3), "     rho: ", round(bgm_kTotal_bgm_LogFC_spearman_mg_modules_m$estimate,digits = 3))) + 
+  theme_classic() + theme(axis.text=element_text(size=12), axis.title=element_text(size=16,face="bold")) + 
+  geom_hline(yintercept=0, color = "black",size=0.5, alpha = 0.2) + 
+  ylim(-7, +7) + scale_colour_gradientn(colours = c("#04b4d6", "white","white","white","white"), breaks = 0.01, name = "padj") +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(colour = "black", size=1)) +
+  theme(plot.margin = unit(c(1,1,1,1), "cm")) + theme(plot.title = element_text(size=16,face="bold")) 
+
+bgm_kTotal_bgm_LogFC_spearman_fg_modules_m <- cor.test(fg_module_genes_con_tot$kTotal_bgm , fg_module_genes_con_tot$BGM_M_logFC, method = "spearman", continuity = FALSE, conf.level = 0.95)
+bgm_kTotal_bgm_LogFC_plot_fg_modules_m <- ggplot() +
+  geom_point(data=fg_module_genes_con_tot, aes(kTotal_bgm, BGM_M_logFC, color=BGM_M_padj), size=5, alpha = 0.5, shape= 20) +
+  labs(x="total connectivity B. grandii (sex)", y = "LogFC B. grandii M (sex)", title = paste0(
+    "genes in female gonad modules     pval: ", round(bgm_kTotal_bgm_LogFC_spearman_fg_modules_m$p.value,digits = 3), "     rho: ", round(bgm_kTotal_bgm_LogFC_spearman_fg_modules_m$estimate,digits = 3))) + 
+  theme_classic() + theme(axis.text=element_text(size=12), axis.title=element_text(size=16,face="bold")) + 
+  geom_hline(yintercept=0, color = "black",size=0.5, alpha = 0.2) + 
+  ylim(-7, +7) + scale_colour_gradientn(colours = c("#04b4d6", "white","white","white","white"), breaks = 0.01, name = "padj") +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(colour = "black", size=1)) +
+  theme(plot.margin = unit(c(1,1,1,1), "cm")) + theme(plot.title = element_text(size=16,face="bold"))
+
+bgm_kTotal_bgm_LogFC_spearman_nonmodules_m <- cor.test(con_tot_mod_other$kTotal_bgm , con_tot_mod_other$BGM_M_logFC, method = "spearman", continuity = FALSE, conf.level = 0.95)
+bgm_kTotal_bgm_LogFC_plot_nonmodules_m <- ggplot() +
+  geom_point(data=con_tot_mod_other, aes(kTotal_bgm, BGM_M_logFC, color=BGM_M_padj), size=5, alpha = 0.5, shape= 20) +
+  labs(x="total connectivity B. grandii (sex)", y = "LogFC B. grandii M (sex)", title = paste0(
+    "all other genes     pval: ", round(bgm_kTotal_bgm_LogFC_spearman_nonmodules_m$p.value,digits = 3), "     rho: ", round(bgm_kTotal_bgm_LogFC_spearman_nonmodules_m$estimate,digits = 3))) + 
+  theme_classic() + theme(axis.text=element_text(size=12), axis.title=element_text(size=16,face="bold")) + 
+  geom_hline(yintercept=0, color = "black",size=0.5, alpha = 0.2) + 
+  ylim(-7, +7) + scale_colour_gradientn(colours = c("#04b4d6", "white","white","white","white"), breaks = 0.01, name = "padj") +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(colour = "black", size=1)) +
+  theme(plot.margin = unit(c(1,1,1,1), "cm")) + theme(plot.title = element_text(size=16,face="bold"))
+
+grid.arrange(bgm_kTotal_bgm_LogFC_plot_mg_modules_f,
+             bgm_kTotal_bgm_LogFC_plot_mg_modules_m,
+             bgm_kTotal_bat_LogFC_plot_mg_modules, 
+             bgm_kTotal_bro_LogFC_plot_mg_modules,
+             bgm_kTotal_bgm_LogFC_plot_fg_modules_f,
+             bgm_kTotal_bgm_LogFC_plot_fg_modules_m,
+             bgm_kTotal_bat_LogFC_plot_fg_modules,
+             bgm_kTotal_bro_LogFC_plot_fg_modules,
+             bgm_kTotal_bgm_LogFC_plot_nonmodules_f,
+             bgm_kTotal_bgm_LogFC_plot_nonmodules_m,
+             bgm_kTotal_bat_LogFC_plot_nonmodules,
+             bgm_kTotal_bro_LogFC_plot_nonmodules,
+             layout_matrix = rbind(c(1,2,3,4),c(5,6,7,8),c(9,10,11,12)))
+```

@@ -17,7 +17,7 @@ male gonads were more likely to have a gonad-biased expression profile in parthe
 pleiotropy in the cryptic persistence of a trait molecular ground plan, despite its phenotypical absence.
 
 
-**Abstract**- After the loss of a trait, theory predicts that the molecular machinery underlying its phenotypic expression should
+**Abstract** - After the loss of a trait, theory predicts that the molecular machinery underlying its phenotypic expression should
 decay. Yet, empirical evidence is contrasting. Here, we test the hypotheses that (1) the molecular ground plan of a lost trait could
 persist due to pleiotropic effects on other traits and (2) that gene co-expression network architecture could constrain individual
 gene expression. Our testing ground has been the Bacillus stick insect species complex, which contains close relatives that are
@@ -29,7 +29,7 @@ could be driven by pleiotropic interactions and an ongoing role in female reprod
 played a key role, with highly connected - and more pleiotropic - genes within male gonad also having a gonad-biased expression
 in parthenogens. Our findings provide novel insight into the mechanisms which could underlie the production of rare males in
 parthenogenetic lineages; more generally, they provide an example of the cryptic persistence of a lost trait molecular ground plan,
-driven by gene pleiotropy on other traits and within their co-expression network.'
+driven by gene pleiotropy on other traits and within their co-expression network.
 
 
 The manuscript will be made available [**here**]() when published.

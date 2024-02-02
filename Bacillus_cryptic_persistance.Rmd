@@ -1,4 +1,4 @@
----
+ ---
 output:
   html_document: default
   pdf_document: default
@@ -1004,4 +1004,39 @@ grid.arrange(bgm_kTotal_bgm_LogFC_plot_mg_modules_f,
              bgm_kTotal_bat_LogFC_plot_nonmodules,
              bgm_kTotal_bro_LogFC_plot_nonmodules,
              layout_matrix = rbind(c(1,2,3,4),c(5,6,7,8),c(9,10,11,12)))
+```
+
+#### **revisions sanity check**
+
+```{r revisions sanity check, fig.width=30, fig.height=20, message=FALSE, warning=FALSE}
+
+# number of genes NOT found within co-expression modules BUT upregulated in male gonads
+dim(subset(tot, tot$OG %in% grey_module & BGM_M_padj < 0.01 & BGM_M_logFC > 1))
+
+# number of genes upregulated in male gonads for each co-expression module (A to G)
+dim(subset(tot, tot$OG %in% black_module & BGM_M_padj < 0.01 & BGM_M_logFC > 1))
+dim(subset(tot, tot$OG %in% blue_module & BGM_M_padj < 0.01 & BGM_M_logFC > 1))
+dim(subset(tot, tot$OG %in% brown_module & BGM_M_padj < 0.01 & BGM_M_logFC > 1))
+dim(subset(tot, tot$OG %in% green_module & BGM_M_padj < 0.01 & BGM_M_logFC > 1))
+dim(subset(tot, tot$OG %in% red_module & BGM_M_padj < 0.01 & BGM_M_logFC > 1))
+dim(subset(tot, tot$OG %in% turquoise_module & BGM_M_padj < 0.01 & BGM_M_logFC > 1))
+dim(subset(tot, tot$OG %in% yellow_module & BGM_M_padj < 0.01 & BGM_M_logFC > 1))
+
+# number of genes upregulated in male gonads also in co-expression modules correlated to male gonads
+tot['module'] <- ifelse( tot$OG %in% male_gonad_network_genes,"within male gonad network","outside male gonad network")
+
+# gene in co-expression modules correlated to male gonads number of genes upregulated in male gonads also 
+tot %>%
+ ggplot( aes(x=module, y=BGM_M_logFC, size=-log(BGM_M_padj))) +
+    geom_jitter(color="black", alpha=0.25) + theme_bw()
+
+# number of genes NOT found within co-expression modules BUT upregulated in male gonads
+dim(subset(tot,BGM_M_padj < 0.01 & BGM_M_logFC > 1))
+
+dim(subset(tot, tot$OG %in% blue_module & BGM_M_padj < 0.01 & BGM_M_logFC > 1))
+dim(subset(tot, tot$OG %in% green_module & BGM_M_padj < 0.01 & BGM_M_logFC > 1))
+dim(subset(tot, tot$OG %in% turquoise_module & BGM_M_padj < 0.01 & BGM_M_logFC > 1))
+dim(subset(tot, tot$OG %in% black_module & BGM_M_padj < 0.01 & BGM_M_logFC > 1))
+dim(subset(tot, tot$OG %in% grey_module & BGM_M_padj < 0.01 & BGM_M_logFC > 1))
+dim(subset(tot, tot$OG %in% grey_module & BGM_M_padj < 0.01 & BGM_M_logFC > 1))
 ```
